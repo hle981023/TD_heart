@@ -55,7 +55,7 @@ addEventListener('resize', resize);
 // bloom
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, cam));
-const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.25, 0.4, 0.8);
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.4, 0.55, 0.72);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());   // applies tone mapping + sRGB (prevents white clipping)
 resize();
@@ -132,9 +132,10 @@ function styleLock(root){
     const src = Array.isArray(o.material) ? o.material[0] : o.material;
     const map = (src && src.map) ? src.map : null;
     const n = o.name.toLowerCase();
-    const base = map ? 0xffffff
-      : n.includes('petal') ? 0xc6cede
+    // petals dimmed a touch (even with map) so they keep shape under bloom instead of blowing white
+    const base = n.includes('petal') ? 0xb8bed2
       : n.includes('keyhole') ? 0x0a0a0a
+      : map ? 0xf0e6cc
       : 0xd28f18;
     const m = new THREE.MeshBasicMaterial({ map, color:base });
     m.userData.base = new THREE.Color(base);
@@ -182,11 +183,27 @@ function pool(texture, n, blending=THREE.AdditiveBlending){
 const hearts = pool(heartTex, 60, THREE.NormalBlending);
 const sparkles = pool(heartTex, 34, THREE.NormalBlending);
 const orbs = pool(orbTex, 16);
-// single glowing outline heart for finger-heart / open-palm gestures
-const lineHeart = new THREE.Sprite(new THREE.SpriteMaterial({ map:heartLineTex,
-  transparent:true, blending:THREE.AdditiveBlending, depthTest:false, opacity:0 }));
-lineHeart.visible=false; scene.add(lineHeart);
-let lhShow=0;   // 0..1 eased visibility
+// stream of EXPANDING neon outline hearts (finger-heart / open-palm) — like the TD heart burst
+const lineHearts = pool(heartLineTex, 24, THREE.AdditiveBlending);
+let lastLH = -999;
+function spawnLineHeart(cx, cy, s0, s1, ttl, now){
+  for(const h of lineHearts){ if(h.life>0) continue;
+    h.life=ttl; h.ttl=ttl; h.cx=cx; h.cy=cy; h.s0=s0; h.s1=s1;
+    h.sp.position.set(cx,cy,0.25); h.sp.visible=true; return; }
+}
+function updateLineHearts(dt){
+  for(const h of lineHearts){ if(h.life<=0) continue;
+    h.life-=dt; if(h.life<=0){ h.sp.visible=false; h.sp.material.opacity=0; continue; }
+    const k=1-h.life/h.ttl;                 // 0 -> 1 as it expands
+    h.sp.scale.setScalar(h.s0+(h.s1-h.s0)*k);
+    h.sp.material.opacity=Math.sin(k*Math.PI)*0.95;   // fade in then out
+  }
+}
+// soft radial halos behind the artifacts (the "surrounding gradient glow")
+function makeHalo(hex){ const sp=new THREE.Sprite(new THREE.SpriteMaterial({ map:orbTex,
+  color:hex, transparent:true, blending:THREE.AdditiveBlending, depthTest:false, opacity:0 }));
+  sp.visible=false; scene.add(sp); return sp; }
+const eggHalo = makeHalo(0xff4d7a), lockHalo = makeHalo(0xffd27a);
 // rays: planes (need rotation) -> use meshes
 const rays = [];
 for(let i=0;i<14;i++){ const m=new THREE.Mesh(new THREE.PlaneGeometry(0.06,0.5),
@@ -295,9 +312,15 @@ function frame(){
   // ---- EGG ----
   if(egg){
     egg.visible = !!cls.egg;
+    eggHalo.visible = !!cls.egg;
     if(cls.egg){ const w=toWorld(cls.egg); eggRot.y+=dt*1.0;
-      egg.position.set(w.x, w.y+0.18+0.05*Math.sin(t*1.3), 0);
-      egg.rotation.y=eggRot.y; }
+      const ey=w.y+0.18+0.05*Math.sin(t*1.3);
+      egg.position.set(w.x, ey, 0);
+      egg.rotation.y=eggRot.y;
+      eggHalo.position.set(w.x, ey, -0.1);
+      eggHalo.scale.setScalar(1.0+0.06*Math.sin(t*2.2));
+      eggHalo.material.opacity=0.5;
+    }
   }
 
   // ---- LOCK ----
@@ -305,24 +328,31 @@ function frame(){
   const showLock = cls.kind==='fuse' || (cls.lock && cls.kind==='summon');
   if(lk){
     lk.visible=!!showLock;
+    lockHalo.visible=!!showLock;
     if(cls.kind==='fuse'){
       const wl=toWorld(cls.L.tipIndex), wr=toWorld(cls.R.tipIndex);
+      const mx=(wl.x+wr.x)/2, my=(wl.y+wr.y)/2+0.1;
       lockRot.y+=dt*2.2;
-      lk.position.set((wl.x+wr.x)/2,(wl.y+wr.y)/2+0.1,0);
+      lk.position.set(mx,my,0);
       lk.rotation.y=lockRot.y;
-      const p=0.5+0.5*Math.sin(t*3); lk.scale.setScalar(0.3*(1+0.1*p));
+      const p=0.5+0.5*Math.sin(t*3); lk.scale.setScalar(0.42*(1+0.08*p));
       // rainbow glow via color tint (brightened by pulse)
       const hue=(t*0.14)%1;
       const gc=new THREE.Color().setHSL(hue,0.8,0.55+0.12*p);
       const pc=new THREE.Color().setHSL(hue,0.45,0.82);
       lockGoldMats.forEach(m=>{ m.color.copy(gc); });
       lockPetalMats.forEach(m=>{ m.color.copy(pc); });
+      lockHalo.material.color.setHSL(hue,0.7,0.55);
+      lockHalo.position.set(mx,my,-0.1); lockHalo.scale.setScalar(0.95+0.08*p); lockHalo.material.opacity=0.38;
     } else if(showLock){
       const w=toWorld(cls.lock); lockRot.y+=dt*0.9;
-      lk.position.set(w.x, w.y+0.18+0.05*Math.sin(t*1.3),0);
-      lk.rotation.y=lockRot.y; lk.scale.setScalar(0.28);
+      const ly=w.y+0.18+0.05*Math.sin(t*1.3);
+      lk.position.set(w.x, ly,0);
+      lk.rotation.y=lockRot.y; lk.scale.setScalar(0.42);
       lockGoldMats.forEach(m=>{ m.color.copy(m.userData.base); });
       lockPetalMats.forEach(m=>{ m.color.copy(m.userData.base); });
+      lockHalo.material.color.setHex(0xffb060);
+      lockHalo.position.set(w.x, ly,-0.1); lockHalo.scale.setScalar(0.72+0.04*Math.sin(t*2.2)); lockHalo.material.opacity=0.22;
     }
   }
 
@@ -355,31 +385,23 @@ function frame(){
     m.position.set(lk.position.x+Math.cos(ang)*d, lk.position.y+Math.sin(ang)*d, 0.15);
     m.rotation.z=ang-Math.PI/2; m.scale.set(1,len/0.5,1); m.material.opacity=0.3+0.4*pulse; }
 
-  // ---- outline heart (finger-heart small / open-palm big) ----
-  let lhTarget=0, lhSize=0.5, lhCx=0, lhCy=0;
+  // ---- EXPANDING neon outline hearts (finger-heart small / open-palm big) ----
   if(cls.kind==='fingerHeart'){
-    lhTarget=1; lhSize=0.5;
-    lhCx=(cls.L.tipIndex.x+cls.R.tipIndex.x+cls.L.tipThumb.x+cls.R.tipThumb.x)/4;
-    lhCy=(cls.L.tipIndex.y+cls.R.tipIndex.y+cls.L.tipThumb.y+cls.R.tipThumb.y)/4;
-    const w=toWorld({x:lhCx,y:lhCy}); lhCx=w.x; lhCy=w.y+0.06;
+    let cx=(cls.L.tipIndex.x+cls.R.tipIndex.x+cls.L.tipThumb.x+cls.R.tipThumb.x)/4;
+    let cy=(cls.L.tipIndex.y+cls.R.tipIndex.y+cls.L.tipThumb.y+cls.R.tipThumb.y)/4;
+    const w=toWorld({x:cx,y:cy});
+    if(now-lastLH>420){ spawnLineHeart(w.x, w.y+0.06, 0.14, 0.75, 1.1, now); lastLH=now; }
   } else if(cls.kind==='bigHeart'){
-    lhTarget=1; lhSize=1.15; lhCx=0; lhCy=0.15;   // large, centred
+    if(now-lastLH>260){ spawnLineHeart(0, 0.12, 0.28, 1.7, 1.15, now); lastLH=now; }
   }
-  lhShow += (lhTarget-lhShow)*Math.min(1,dt*10);  // ease in/out
-  lineHeart.visible = lhShow>0.01;
-  if(lineHeart.visible){
-    const pulse=1+0.05*Math.sin(t*6);
-    lineHeart.position.set(lhCx, lhCy, 0.25);
-    lineHeart.scale.setScalar(lhSize*pulse*(0.6+0.4*lhShow));
-    lineHeart.material.opacity=lhShow;
-  }
+  updateLineHearts(dt);
   updateHearts(dt);
 
   // badge
   const label={idle:'대기 중…',summon:'소환',fuse:'✦ 융합 (무지개)',fingerHeart:'♡ 핑거 하트',bigHeart:'♥ 큰 하트',}[cls.kind]||'…';
   badge.textContent=label;
 
-  renderer.render(scene, cam);
+  composer.render();
   requestAnimationFrame(frame);
 }
 
