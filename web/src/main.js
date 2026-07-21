@@ -399,9 +399,10 @@ function frame(){
     let cx=(cls.L.tipIndex.x+cls.R.tipIndex.x+cls.L.tipThumb.x+cls.R.tipThumb.x)/4;
     let cy=(cls.L.tipIndex.y+cls.R.tipIndex.y+cls.L.tipThumb.y+cls.R.tipThumb.y)/4;
     const w=toWorld({x:cx,y:cy});
-    if(now-lastLH>420){ spawnLineHeart(w.x, w.y+0.06, 0.14, 0.75, 1.1, now); lastLH=now; }
+    // start at the hands, expand out past the screen edges
+    if(now-lastLH>520){ spawnLineHeart(w.x, w.y+0.06, 0.16, 2.6*aspect, 1.5, now); lastLH=now; }
   } else if(cls.kind==='bigHeart'){
-    if(now-lastLH>260){ spawnLineHeart(0, 0.12, 0.28, 1.7, 1.15, now); lastLH=now; }
+    if(now-lastLH>340){ spawnLineHeart(0, 0.12, 0.3, 4.4*aspect, 1.6, now); lastLH=now; }
   }
   updateLineHearts(dt);
   updateHearts(dt);
