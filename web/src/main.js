@@ -42,6 +42,14 @@ const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = null;  // DIAG
 }
 
+let bgPlane = null;   // webcam rendered as scene background (so bloom+webcam coexist)
+function fitBg(){
+  if(!bgPlane) return;
+  const va = (camEl.videoWidth||16)/(camEl.videoHeight||9);
+  let W,H;
+  if(aspect > va){ W = 2*aspect; H = W/va; } else { H = 2; W = H*va; }   // cover
+  bgPlane.scale.set(W/2, H/2, 1);
+}
 function resize(){
   const w = innerWidth, h = innerHeight;
   renderer.setSize(w, h);
@@ -49,6 +57,7 @@ function resize(){
   cam.left = -aspect; cam.right = aspect; cam.top = 1; cam.bottom = -1;
   cam.updateProjectionMatrix();
   composer && composer.setSize(w, h);
+  fitBg();
 }
 addEventListener('resize', resize);
 
@@ -412,6 +421,13 @@ async function start(){
   try{
     const stream = await navigator.mediaDevices.getUserMedia({ video:{ width:1280, height:720, facingMode:'user' }, audio:false });
     camEl.srcObject = stream; await camEl.play();
+    // render the webcam as an opaque scene background (mirrored), so the composer
+    // (bloom) output isn't a black rectangle covering the camera.
+    const vtex = new THREE.VideoTexture(camEl); vtex.colorSpace = THREE.SRGBColorSpace;
+    vtex.wrapS = THREE.RepeatWrapping; vtex.repeat.x = -1; vtex.offset.x = 1;   // mirror
+    bgPlane = new THREE.Mesh(new THREE.PlaneGeometry(2,2),
+      new THREE.MeshBasicMaterial({ map:vtex, depthTest:false, depthWrite:false, toneMapped:false }));
+    bgPlane.position.z = -5; bgPlane.renderOrder = -10; scene.add(bgPlane); fitBg();
   }catch(e){ showErr('카메라 접근 실패: '+e.message); return; }
   badge.textContent='손 인식 로딩…';
   try{ await initHands(); }catch(e){ showErr('MediaPipe 로드 실패: '+e.message); return; }
