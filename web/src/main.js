@@ -86,26 +86,30 @@ const rayTex = tex((g,s)=>{ const r=g.createLinearGradient(0,0,0,s);
   r.addColorStop(1,'rgba(255,255,255,0)'); g.fillStyle=r; g.fillRect(s*0.44,0,s*0.12,s); });
 
 // ---------- artifacts ----------
-// EGG — procedural: red shell (elongated sphere) + black band + pink heart decals
-function makeEgg(){
-  const grp = new THREE.Group();
-  // full-sphere texture with baked top-light gradient + black heart band (unlit material)
-  const shellTex = tex((g,s)=>{
-    const grd=g.createLinearGradient(0,0,0,s);       // top lighter -> bottom darker (fake form)
-    grd.addColorStop(0,'#c9182b'); grd.addColorStop(0.5,'#9c1020'); grd.addColorStop(1,'#4c0810');
-    g.fillStyle=grd; g.fillRect(0,0,s,s);
-    const y0=s*0.42, h=s*0.18;
-    g.fillStyle='#0b0507'; g.fillRect(0,y0,s,h);
-    for(let i=0;i<9;i++){ g.save(); g.translate((i+0.5)*s/9, y0+h*0.5); const sc=(h*0.9)/s;
-      g.scale(sc,sc); g.translate(-s/2,-s*0.62); heartPath(g,s); g.fillStyle='#ff7396'; g.fill(); g.restore(); }
-  }, 512);
-  const shell = new THREE.Mesh(new THREE.SphereGeometry(0.5, 48, 48),
-    new THREE.MeshBasicMaterial({ map:shellTex }));   // unlit: exact texture colors, no wash
-  shell.scale.set(0.82, 1.06, 0.82);
-  grp.add(shell);
-  grp.scale.setScalar(0.42);
-  return grp;
+// give a loaded FBX unlit materials using its own baked textures (no lighting wash)
+function styleBaked(root, fallback){
+  root.traverse(o=>{
+    if(!o.isMesh) return;
+    const src = Array.isArray(o.material) ? o.material[0] : o.material;
+    const map = (src && src.map) ? src.map : null;
+    if(map) map.colorSpace = THREE.SRGBColorSpace;
+    o.material = new THREE.MeshBasicMaterial({ map, color: map ? 0xffffff : fallback });
+  });
 }
+// EGG — the real egg.fbx (spins + bobs); loaded async into `egg`
+const eggLoader = new FBXLoader();
+eggLoader.load('./assets/egg.fbx', (fbx)=>{
+  const box = new THREE.Box3().setFromObject(fbx);
+  const size = new THREE.Vector3(); box.getSize(size);
+  const s = 1.0 / Math.max(size.x, size.y, size.z);
+  fbx.scale.setScalar(s);
+  const c = new THREE.Vector3(); box.getCenter(c); fbx.position.sub(c.multiplyScalar(s));
+  const holder = new THREE.Group(); holder.add(fbx);
+  styleBaked(holder, 0xb01524);
+  holder.scale.setScalar(0.42);
+  holder.visible = false; scene.add(holder);
+  egg = holder;
+}, undefined, (e)=>showErr('egg FBX load fail: '+e));
 
 // LOCK — load the FBX, gold body + white opal petals
 let lockProto = null, lockPetalMats = [], lockGoldMats = [];
@@ -143,7 +147,7 @@ loader.load('./assets/lock_touchdesigner.fbx', (fbx)=>{
 }, undefined, (e)=>showErr('FBX load fail: '+e));
 
 // live instances
-const egg = makeEgg(); egg.visible=false; scene.add(egg);
+let egg = null;   // set once egg.fbx loads
 let lock = null;                 // set once FBX ready
 function ensureLock(){ if(!lock && lockProto){ lock = lockProto.clone(true);
   lock.visible=false; scene.add(lock);
@@ -274,10 +278,12 @@ function frame(){
   const t=now/1000;
 
   // ---- EGG ----
-  egg.visible = !!cls.egg;
-  if(cls.egg){ const w=toWorld(cls.egg); eggRot.y+=dt*1.0;
-    egg.position.set(w.x, w.y+0.18+0.05*Math.sin(t*1.3), 0);
-    egg.rotation.y=eggRot.y; }
+  if(egg){
+    egg.visible = !!cls.egg;
+    if(cls.egg){ const w=toWorld(cls.egg); eggRot.y+=dt*1.0;
+      egg.position.set(w.x, w.y+0.18+0.05*Math.sin(t*1.3), 0);
+      egg.rotation.y=eggRot.y; }
+  }
 
   // ---- LOCK ----
   const lk=ensureLock();
@@ -306,7 +312,7 @@ function frame(){
   }
 
   // ---- sparkles around the egg ----
-  const sparkleOn = !!cls.egg;
+  const sparkleOn = !!cls.egg && !!egg;
   for(let i=0;i<sparkles.length;i++){ const s=sparkles[i];
     if(!sparkleOn){ s.sp.visible=false; continue; }
     s.sp.visible=true; const gA=2.399963*i + t*0.9;
