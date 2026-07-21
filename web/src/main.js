@@ -84,6 +84,17 @@ const orbTex = tex((g,s)=>{ const r=g.createRadialGradient(s/2,s/2,0,s/2,s/2,s/2
 const rayTex = tex((g,s)=>{ const r=g.createLinearGradient(0,0,0,s);
   r.addColorStop(0,'rgba(255,255,255,0)'); r.addColorStop(.5,'rgba(255,255,255,.9)');
   r.addColorStop(1,'rgba(255,255,255,0)'); g.fillStyle=r; g.fillRect(s*0.44,0,s*0.12,s); });
+// neon OUTLINE heart (line only, self-glowing) — the finger-heart / open-palm shape
+const heartLineTex = tex((g,s)=>{
+  g.clearRect(0,0,s,s);
+  g.lineJoin='round'; g.lineCap='round';
+  // outer soft glow
+  g.shadowColor='rgba(255,70,140,1)'; g.shadowBlur=s*0.16;
+  g.strokeStyle='rgba(255,90,150,0.95)'; g.lineWidth=s*0.055; heartPath(g,s); g.stroke();
+  g.shadowBlur=s*0.10; g.stroke();
+  // bright inner core line
+  g.shadowBlur=s*0.04; g.strokeStyle='#ffe2ee'; g.lineWidth=s*0.02; heartPath(g,s); g.stroke();
+}, 256);
 
 // ---------- artifacts ----------
 // give a loaded FBX unlit materials using its own baked textures (no lighting wash)
@@ -171,6 +182,11 @@ function pool(texture, n, blending=THREE.AdditiveBlending){
 const hearts = pool(heartTex, 60, THREE.NormalBlending);
 const sparkles = pool(heartTex, 34, THREE.NormalBlending);
 const orbs = pool(orbTex, 16);
+// single glowing outline heart for finger-heart / open-palm gestures
+const lineHeart = new THREE.Sprite(new THREE.SpriteMaterial({ map:heartLineTex,
+  transparent:true, blending:THREE.AdditiveBlending, depthTest:false, opacity:0 }));
+lineHeart.visible=false; scene.add(lineHeart);
+let lhShow=0;   // 0..1 eased visibility
 // rays: planes (need rotation) -> use meshes
 const rays = [];
 for(let i=0;i<14;i++){ const m=new THREE.Mesh(new THREE.PlaneGeometry(0.06,0.5),
@@ -253,9 +269,8 @@ function updateHearts(dt){
 // ---------- demo mode (no camera): scripted showcase ----------
 const DEMO = new URLSearchParams(location.search).has('demo');
 function demoClassify(t){
-  const c = (new URLSearchParams(location.search).get('phase')==='summon') ? 0
-          : (new URLSearchParams(location.search).get('phase')==='fuse') ? 5
-          : t%12;
+  const ph = new URLSearchParams(location.search).get('phase');
+  const c = ph==='summon' ? 0 : ph==='fuse' ? 5 : ph==='big' ? 10 : t%12;
   if(c<4)  return { kind:'summon', egg:{x:0.72,y:0.42}, lock:{x:0.28,y:0.42} }; // raw coords (mirror -> egg left)
   if(c<8){ const y=0.42+0.04*Math.sin(t*1.5);
     return { kind:'fuse', L:{tipIndex:{x:0.52,y}}, R:{tipIndex:{x:0.48,y}} }; }
@@ -340,11 +355,24 @@ function frame(){
     m.position.set(lk.position.x+Math.cos(ang)*d, lk.position.y+Math.sin(ang)*d, 0.15);
     m.rotation.z=ang-Math.PI/2; m.scale.set(1,len/0.5,1); m.material.opacity=0.3+0.4*pulse; }
 
-  // ---- heart bursts ----
-  if(cls.kind==='fingerHeart'){ const c=toWorld({x:(cls.L.tipIndex.x+cls.R.tipIndex.x)/2, y:(cls.L.tipIndex.y+cls.R.tipIndex.y)/2});
-    if(Math.random()<0.5) spawnHearts(c.x, c.y, 2, 0.7, now); }
-  if(cls.kind==='bigHeart'){ const c={x:0,y:0};
-    spawnHearts(c.x, c.y, 4, 1.3, now); }
+  // ---- outline heart (finger-heart small / open-palm big) ----
+  let lhTarget=0, lhSize=0.5, lhCx=0, lhCy=0;
+  if(cls.kind==='fingerHeart'){
+    lhTarget=1; lhSize=0.5;
+    lhCx=(cls.L.tipIndex.x+cls.R.tipIndex.x+cls.L.tipThumb.x+cls.R.tipThumb.x)/4;
+    lhCy=(cls.L.tipIndex.y+cls.R.tipIndex.y+cls.L.tipThumb.y+cls.R.tipThumb.y)/4;
+    const w=toWorld({x:lhCx,y:lhCy}); lhCx=w.x; lhCy=w.y+0.06;
+  } else if(cls.kind==='bigHeart'){
+    lhTarget=1; lhSize=1.15; lhCx=0; lhCy=0.15;   // large, centred
+  }
+  lhShow += (lhTarget-lhShow)*Math.min(1,dt*10);  // ease in/out
+  lineHeart.visible = lhShow>0.01;
+  if(lineHeart.visible){
+    const pulse=1+0.05*Math.sin(t*6);
+    lineHeart.position.set(lhCx, lhCy, 0.25);
+    lineHeart.scale.setScalar(lhSize*pulse*(0.6+0.4*lhShow));
+    lineHeart.material.opacity=lhShow;
+  }
   updateHearts(dt);
 
   // badge
